@@ -1,5 +1,5 @@
 #	Lattice Blind Signature
-This repository contains the code for the paper **Improved Lattice Blind Signatures from Recycled Entropy**. Part of the code was taken from the implementation of [lattice anonymous credentials](https://github.com/Chair-for-Security-Engineering/lattice-anonymous-credentials).
+This repository contains the code by Corentin Jeudy for the paper **Improved Lattice Blind Signatures from Recycled Entropy** by Corentin Jeudy and Olivier Sanders. The paper was published at Crypto 2025 and is also available on the IACR ePrint Archive [here](https://eprint.iacr.org/2024/1289). Part of the code was taken from the implementation of [lattice anonymous credentials](https://github.com/Chair-for-Security-Engineering/lattice-anonymous-credentials) by Sven Argo, Corentin Jeudy and Georg Land.
 
 The repository contains
 - the parameter selection and security estimation scripts, and
