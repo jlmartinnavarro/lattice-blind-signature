@@ -80,9 +80,35 @@ set(SOURCES_LBSIG
   "${SRC_DIR}/verify_1.c"
   "${SRC_DIR}/verify_2.c")
 
+# Build a reusable C library target that Rust (or other consumers) can link to.
+add_library(lbsig STATIC ${SOURCES_LBSIG})
+set_target_properties(lbsig PROPERTIES
+    POSITION_INDEPENDENT_CODE ON
+    ARCHIVE_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/lib
+)
+target_include_directories(lbsig PUBLIC ${INCLUDE_DIR})
+## Locate FLINT library (prefer local _build/lib, then install paths)
+find_library(FLINT_LIB NAMES flint libflint PATHS
+  "${CMAKE_SOURCE_DIR}/libs/flint/_build/lib"
+  "${CMAKE_SOURCE_DIR}/libs/flint/lib"
+  "/usr/local/lib"
+  "/usr/lib"
+  NO_DEFAULT_PATH)
+if(NOT FLINT_LIB)
+  # fallback to default search paths
+  find_library(FLINT_LIB NAMES flint libflint)
+endif()
+if(NOT FLINT_LIB)
+  message(FATAL_ERROR "Could not find libflint. Build FLINT (see README) or set FLINT_LIB to its path.")
+else()
+  message(STATUS "Found libflint: ${FLINT_LIB}")
+endif()
+
+target_link_libraries(lbsig PUBLIC ${FLINT_LIB} m)
+
 target_sources(test PUBLIC
-  "${TEST_DIR}/main.c"
-  "${SOURCES_LBSIG}")
+  "${TEST_DIR}/main.c")
+target_link_libraries(test PUBLIC lbsig)
 
 target_sources(bench PUBLIC
   "${BENCH_DIR}/main.c"
@@ -91,8 +117,8 @@ target_sources(bench PUBLIC
   "${BENCH_DIR}/bench_bsig_user.c"
   "${BENCH_DIR}/bench_bsig_verify.c"
   "${BENCH_DIR}/bench_proof_1.c"
-  "${BENCH_DIR}/bench_proof_2.c"
-  "${SOURCES_LBSIG}")
+  "${BENCH_DIR}/bench_proof_2.c")
+target_link_libraries(bench PUBLIC lbsig)
 
 target_include_directories(test PUBLIC ${INCLUDE_DIR})
 target_include_directories(bench PUBLIC ${INCLUDE_DIR} ${BENCH_DIR})
@@ -111,22 +137,27 @@ set(TEST_OPTS
   -march=native
   -g
   -O3
+  -maes
   )
 
 set(BENCH_OPTS
   -march=native
   -O3
+  -maes
   )
 
 target_compile_options(test PUBLIC ${WARN_ERROR_FLAGS} ${TEST_OPTS} ${SANITIZER_FLAGS})
 target_link_options(test PUBLIC ${TEST_OPTS} ${SANITIZER_FLAGS})
 
+# Ensure the library itself is compiled with AES intrinsics enabled
+target_compile_options(lbsig PUBLIC -maes)
+
 target_compile_definitions(bench PUBLIC REMOVE_ASSERTS=1)
 target_compile_options(bench PUBLIC ${WARN_ERROR_FLAGS} ${BENCH_OPTS})
 target_link_options(bench PUBLIC ${BENCH_OPTS})
 
-target_link_libraries(test PUBLIC "${CMAKE_SOURCE_DIR}/libs/flint/libflint.so")
+target_link_libraries(test PUBLIC ${FLINT_LIB})
 target_link_libraries(test PUBLIC m)
 
-target_link_libraries(bench PUBLIC "${CMAKE_SOURCE_DIR}/libs/flint/libflint.so")
+target_link_libraries(bench PUBLIC ${FLINT_LIB})
 target_link_libraries(bench PUBLIC m)
