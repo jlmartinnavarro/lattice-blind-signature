@@ -1,2 +1,7 @@
-code/build/*
-code/libs/*
+code/build/
+code/libs/
+code/libs/flint/
+blind-sign/target/
+blind-sign/debug/
+code/CMakeFiles/
+**/*.rs.bk
