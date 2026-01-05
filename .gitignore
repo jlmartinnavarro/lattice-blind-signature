@@ -5,3 +5,7 @@ blind-sign/target/
 blind-sign/debug/
 code/CMakeFiles/
 **/*.rs.bk
+CMakeCache.txt
+cmake_install.cmake
+code/Makefile
+blind-sign/Cargo.lock
