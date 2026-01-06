@@ -11,3 +11,11 @@ bindgen = "0.72"
 
 [dependencies]
 libc = "0.2"
+
+[[bin]]
+name = "server"
+path = "src/server.rs"
+
+[[bin]]
+name = "client"
+path = "src/client.rs"

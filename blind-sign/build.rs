@@ -43,6 +43,7 @@ println!(
     let include_dir = code_dir.join("include");
     let signer_h = include_dir.join("bsig_signer.h");
     let user_h   = include_dir.join("bsig_user.h");
+    let bsig_verify_h = include_dir.join("bsig_verify.h");
 
     // rerun when headers change
     println!("cargo:rerun-if-changed={}", signer_h.display());
@@ -62,6 +63,7 @@ println!(
     let mut builder = bindgen::Builder::default()
         .header(signer_h.to_string_lossy())
         .header(user_h.to_string_lossy())
+        .header(bsig_verify_h.to_string_lossy())
         // important for modern clang
         .clang_arg("-std=c11");
 
