@@ -1,10 +1,15 @@
 use std::io::{Read, Write};
 use std::mem::MaybeUninit;
-use std::net::TcpListener;
 use std::ptr;
-
+use std::{
+    fs,
+    io::{prelude::*, BufReader},
+    net::{TcpListener, TcpStream},
+};
 include!(concat!(env!("OUT_DIR"), "/bindings.rs"));
+extern crate regex;
 
+use regex::Regex;
 unsafe fn serialize_poly_q_vec_d(vec_ptr: *mut __poly_q_vec_d) -> Vec<i64> {
     let mut coeffs = Vec::new();
     for d in 0..PARAM_D {
@@ -100,30 +105,121 @@ unsafe fn serialize_vec_d(vec: *const poly_q_vec_d) -> Vec<Vec<i64>> {
     }
     out
 }
-/* unsafe fn deserialize_pk(data: &Vec<Vec<Vec<i64>>>, seed: &[u8], pk: *mut pk_t) {
+
+/* unsafe fn serialize_pk(pk: *const pk_t) -> (Vec<Vec<Vec<Vec<i64>>>>, Vec<u8>) {
+    let mut b_serialized = Vec::with_capacity(PARAM_K.try_into().unwrap());
     for k in 0..PARAM_K {
-        let mat_serialized = &data[k as usize];
-        let mat: &mut __poly_q_mat_d_d = &mut (*pk).B[k as usize]; // IMPORTANT: &mut __poly_q_mat_d_d
-
+        let mat = &(*pk).B[k as usize][0];
+        let mut mat_serialized = Vec::with_capacity(PARAM_D.try_into().unwrap());
         for row in 0..PARAM_D {
-            let row_serialized = &mat_serialized[row as usize];
-
-            // rows[row] is [__poly_q_vec_d;1], so take [0]
-            let poly_row: &mut __poly_q_vec_d = &mut mat.rows[row as usize][0];
-
-            for i in 0..PARAM_D {
-                let coeffs = &row_serialized[i as usize];
-                let poly: &mut nmod_poly_struct = &mut poly_row.entries[i as usize];
-                deserialize_poly_q(poly as *mut _, coeffs);
-            }
+            let poly_row = &mat.rows[row as usize];
+            mat_serialized.push(serialize_vec_d(poly_row));
         }
+        b_serialized.push(mat_serialized);
     }
 
-    // Copy the seed
-    (*pk).seed.copy_from_slice(seed);
+    let seed = std::slice::from_raw_parts((*pk).seed.as_ptr(), SEED_BYTES as usize).to_vec();
+    (b_serialized, seed)
+} */
+/* unsafe fn blind_sign_request(
+    stream: &mut TcpStream,
+    sk: &mut MaybeUninit<sk_t>,
+    pk: &mut MaybeUninit<pk_t>,
+) {
+    // Receive and reconstruct commitment
+    let cmt_coeffs = recv_coeffs(&mut stream)?;
+    let mut cmt = MaybeUninit::<poly_q_vec_d>::uninit();
+    poly_q_vec_d_init(cmt.as_mut_ptr() as *mut __poly_q_vec_d);
+    deserialize_poly_q_vec_d(cmt.as_mut_ptr() as *mut __poly_q_vec_d, &cmt_coeffs);
+    println!(
+        "Server: received commitment {}: {:?}",
+        cmt_coeffs.len(),
+        &cmt_coeffs[..cmt_coeffs.len().min(6)]
+    );
+
+    // Receive and reconstruct tag
+    let tag_coeffs = recv_coeffs(&mut stream)?;
+    let mut tag = MaybeUninit::<poly_q>::uninit();
+    poly_q_init(tag.as_mut_ptr() as *mut nmod_poly_struct);
+    deserialize_poly_q(tag.as_mut_ptr() as *mut nmod_poly_struct, &tag_coeffs);
+    println!("Server: received tag");
+
+    // Generate pre-signature
+    let mut pre_sig = MaybeUninit::<pre_sig_t>::uninit();
+    pre_sig_init(pre_sig.as_mut_ptr());
+    pre_sign_commitment(
+        pre_sig.as_mut_ptr(),
+        sk.as_mut_ptr(),
+        pk.as_mut_ptr(),
+        cmt.as_mut_ptr() as *mut __poly_q_vec_d,
+        tag.as_mut_ptr() as *mut nmod_poly_struct,
+    );
+    println!("Server: pre-signature generated");
+
+    // Send pre-signature
+    let pre_sig_coeffs = serialize_pre_sig(pre_sig.as_mut_ptr());
+    send_coeffs(&mut stream, &pre_sig_coeffs)?;
+    println!(
+        "Server: sent pre-signature ({} coefficients)",
+        pre_sig_coeffs.len()
+    );
+
+    // Cleanup
+    poly_q_vec_d_clear(cmt.as_mut_ptr() as *mut __poly_q_vec_d);
+    poly_q_clear(tag.as_mut_ptr() as *mut nmod_poly_struct);
+    pre_sig_clear(pre_sig.as_mut_ptr());
+} */
+fn handle_connection(stream: &mut TcpStream) {
+    let buf_reader = BufReader::new(stream);
+    let request_line = buf_reader.lines().next().unwrap().unwrap();
+
+    let re_pk = Regex::new(r"GET\s/pk").unwrap();
+    let re_blind_sign = Regex::new(r"GET\s/blind_sign").unwrap();
+
+    let (_, filename) = if re_pk.is_match(&request_line) {
+        ("HTTP/1.1 200 OK", "pk.html")
+    } else if re_blind_sign.is_match(&request_line) {
+        ("HTTP/1.1 200 OK", "blind.html")
+    } else {
+        ("HTTP/1.1 404 NOT FOUND", "404.html")
+    };
+    println!("{}, {}", request_line, filename);
+
+    /* let contents = fs::read_to_string(filename).unwrap();
+    let length = contents.len();
+
+    let response = format!("{status_line}\r\nContent-Length: {length}\r\n\r\n{contents}");
+
+    stream.write_all(response.as_bytes()).unwrap(); */
 }
- */
-fn main() -> std::io::Result<()> {
+
+use actix_web::{get, web::Data, App, HttpResponse, HttpServer, Responder};
+
+#[get("/pk")]
+async fn pk() -> impl Responder {
+    HttpResponse::Ok().body("Hello pk!")
+}
+
+#[get("/blind_sign")]
+async fn blind_sign() -> impl Responder {
+    HttpResponse::Ok().body("Hello blind_sign!")
+}
+
+/* #[actix_web::main]
+async fn main() -> std::io::Result() {
+    /* let db = Database::init().await;
+    let db_data = Data::new(db); */
+    HttpServer::new(move || {
+        App::new()
+            //.app_data(db_data.clone())
+            .service(pk)
+            .service(blind_sign)
+    })
+    .bind(("127.0.0.1", 4000))?
+    .run()
+    .await
+} */
+/* fn main() -> std::io::Result<()> {
     unsafe {
         arith_setup();
         random_init();
@@ -159,55 +255,13 @@ fn main() -> std::io::Result<()> {
             .take(64)
             .fold(0u64, |acc, &b| acc.wrapping_add(b as u64));
         println!("PK checksum (first 64 bytes): {}", checksum);
-        let listener = TcpListener::bind("127.0.0.1:4000")?;
+        let listener = TcpListener::bind("127.0.0.1:4000").unwrap();
         println!("Server listening on 127.0.0.1:4000");
 
         for stream in listener.incoming() {
-            let mut stream = stream?;
-            println!("Server: client connected");
+            //let stream = stream.unwrap();
 
-            // Receive and reconstruct commitment
-            let cmt_coeffs = recv_coeffs(&mut stream)?;
-            let mut cmt = MaybeUninit::<poly_q_vec_d>::uninit();
-            poly_q_vec_d_init(cmt.as_mut_ptr() as *mut __poly_q_vec_d);
-            deserialize_poly_q_vec_d(cmt.as_mut_ptr() as *mut __poly_q_vec_d, &cmt_coeffs);
-            println!(
-                "Server: received commitment {}: {:?}",
-                cmt_coeffs.len(),
-                &cmt_coeffs[..cmt_coeffs.len().min(6)]
-            );
-
-            // Receive and reconstruct tag
-            let tag_coeffs = recv_coeffs(&mut stream)?;
-            let mut tag = MaybeUninit::<poly_q>::uninit();
-            poly_q_init(tag.as_mut_ptr() as *mut nmod_poly_struct);
-            deserialize_poly_q(tag.as_mut_ptr() as *mut nmod_poly_struct, &tag_coeffs);
-            println!("Server: received tag");
-
-            // Generate pre-signature
-            let mut pre_sig = MaybeUninit::<pre_sig_t>::uninit();
-            pre_sig_init(pre_sig.as_mut_ptr());
-            pre_sign_commitment(
-                pre_sig.as_mut_ptr(),
-                sk.as_mut_ptr(),
-                pk.as_mut_ptr(),
-                cmt.as_mut_ptr() as *mut __poly_q_vec_d,
-                tag.as_mut_ptr() as *mut nmod_poly_struct,
-            );
-            println!("Server: pre-signature generated");
-
-            // Send pre-signature
-            let pre_sig_coeffs = serialize_pre_sig(pre_sig.as_mut_ptr());
-            send_coeffs(&mut stream, &pre_sig_coeffs)?;
-            println!(
-                "Server: sent pre-signature ({} coefficients)",
-                pre_sig_coeffs.len()
-            );
-
-            // Cleanup
-            poly_q_vec_d_clear(cmt.as_mut_ptr() as *mut __poly_q_vec_d);
-            poly_q_clear(tag.as_mut_ptr() as *mut nmod_poly_struct);
-            pre_sig_clear(pre_sig.as_mut_ptr());
+            handle_connection(stream);
         }
 
         keys_clear(pk.as_mut_ptr(), sk.as_mut_ptr());
@@ -215,4 +269,4 @@ fn main() -> std::io::Result<()> {
     }
 
     Ok(())
-}
+} */

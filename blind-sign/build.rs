@@ -30,20 +30,24 @@ fn main() {
         .build_target("lbsig")
         .build();
 
-println!(
-    "cargo:rustc-link-search=native={}",
-    dst.join("build/lib").display()
-);    println!("cargo:rustc-link-lib=static=lbsig");
-    
+    println!(
+        "cargo:rustc-link-search=native={}",
+        dst.join("build/lib").display()
+    );
+    println!("cargo:rustc-link-lib=static=lbsig");
 
-    println!("cargo:rustc-link-search=native={}",flint_lib.parent().unwrap().display());
+    println!(
+        "cargo:rustc-link-search=native={}",
+        flint_lib.parent().unwrap().display()
+    );
     println!("cargo:rustc-link-lib=dylib=flint");
     // ---- bindgen -----------------------------------------------------------
 
     let include_dir = code_dir.join("include");
     let signer_h = include_dir.join("bsig_signer.h");
-    let user_h   = include_dir.join("bsig_user.h");
+    let user_h = include_dir.join("bsig_user.h");
     let bsig_verify_h = include_dir.join("bsig_verify.h");
+    let randombytes_h = include_dir.join("randombytes.h");
 
     // rerun when headers change
     println!("cargo:rerun-if-changed={}", signer_h.display());
@@ -64,6 +68,7 @@ println!(
         .header(signer_h.to_string_lossy())
         .header(user_h.to_string_lossy())
         .header(bsig_verify_h.to_string_lossy())
+        .header(randombytes_h.to_string_lossy())
         // important for modern clang
         .clang_arg("-std=c11");
 

@@ -1,10 +1,26 @@
+use reqwest;
+use serde::{Deserialize, Serialize};
 use std::io::{Read, Write};
 use std::mem::MaybeUninit;
-use std::net::TcpStream;
 use std::ptr;
 
 include!(concat!(env!("OUT_DIR"), "/bindings.rs"));
+#[derive(Serialize, Deserialize)]
+struct BlindSignRequest {
+    cmt_coeffs: Vec<i64>,
+    tag_coeffs: Vec<i64>,
+}
 
+#[derive(Serialize, Deserialize)]
+struct BlindSignResponse {
+    pre_sig_coeffs: Vec<i64>,
+}
+#[derive(Deserialize)]
+pub struct PublicKeyResponse {
+    /// B[k][row][col][coeff_index]
+    pub b: Vec<Vec<Vec<Vec<i64>>>>,
+    pub seed: Vec<u8>,
+}
 unsafe fn serialize_poly_q_vec_d(vec_ptr: *mut __poly_q_vec_d) -> Vec<i64> {
     let mut coeffs = Vec::new();
     for d in 0..PARAM_D {
@@ -16,10 +32,24 @@ unsafe fn serialize_poly_q_vec_d(vec_ptr: *mut __poly_q_vec_d) -> Vec<i64> {
     coeffs
 }
 
-unsafe fn serialize_poly_q(poly_ptr: *mut nmod_poly_struct) -> Vec<i64> {
+/*unsafe fn serialize_poly_q(poly_ptr: *mut nmod_poly_struct) -> Vec<i64> {
     (0..PARAM_N)
         .map(|i| poly_q_get_coeff(poly_ptr, i as usize))
         .collect()
+}
+ */
+use flint_sys::nmod_poly::*;
+
+unsafe fn serialize_poly_q(poly: *const nmod_poly_struct) -> Vec<i64> {
+    let len = nmod_poly_length(poly);
+    let mut coeffs = Vec::with_capacity(len as usize);
+
+    for i in 0..len {
+        let c = nmod_poly_get_coeff_ui(poly, i);
+        coeffs.push(c as i64);
+    }
+
+    coeffs
 }
 
 unsafe fn deserialize_pre_sig(pre_sig_ptr: *mut pre_sig_t, coeffs: &[i64]) {
@@ -58,7 +88,42 @@ unsafe fn deserialize_pre_sig(pre_sig_ptr: *mut pre_sig_t, coeffs: &[i64]) {
     }
 }
 
-fn send_coeffs<W: Write>(stream: &mut W, coeffs: &[i64]) -> std::io::Result<()> {
+unsafe fn load_pk_from_serialized(
+    serialized_b: &Vec<Vec<Vec<Vec<i64>>>>, // [K][D][D][coeffs]
+    seed: &[u8; SEED_BYTES as usize],
+) -> pk_t {
+    // Allocate uninitialized pk
+    let mut pk = MaybeUninit::<pk_t>::uninit();
+
+    // IMPORTANT: initialize pk (this initializes ALL poly_q inside)
+    keys_init(pk.as_mut_ptr(), std::ptr::null_mut());
+
+    let pk = &mut *pk.as_mut_ptr();
+
+    // Fill matrix B
+    for k in 0..PARAM_K as usize {
+        for row in 0..PARAM_D as usize {
+            for col in 0..PARAM_D as usize {
+                let coeffs = &serialized_b[k][row][col];
+
+                let poly: *mut poly_q = &mut pk.B[k][0].rows[row].entries[col];
+
+                // Always zero first
+                poly_q_zero(poly);
+
+                for (i, &c) in coeffs.iter().enumerate() {
+                    poly_q_set_coeff(poly, i, c);
+                }
+            }
+        }
+    }
+
+    // Copy seed
+    pk.seed.copy_from_slice(seed);
+
+    *pk
+}
+/* fn send_coeffs<W: Write>(stream: &mut W, coeffs: &[i64]) -> std::io::Result<()> {
     let bytes: &[u8] = unsafe {
         std::slice::from_raw_parts(
             coeffs.as_ptr() as *const u8,
@@ -92,50 +157,74 @@ unsafe fn deserialize_poly_q(poly_ptr: *mut nmod_poly_struct, coeffs: &[i64]) {
     for (i, &coeff) in coeffs.iter().enumerate() {
         poly_q_set_coeff(poly_ptr, i, coeff);
     }
-}
-/*
-unsafe fn serialize_pk(pk: *const pk_t) -> (Vec<Vec<Vec<i64>>>, Vec<u8>) {
-    let mut b_serialized = Vec::with_capacity(PARAM_K);
+} */
+
+/* unsafe fn deserialize_pk(data: &Vec<Vec<Vec<i64>>>, seed: &[u8], pk: *mut pk_t) {
     for k in 0..PARAM_K {
-        let mat = &(*pk).B[k];
-        let mut mat_serialized = Vec::with_capacity(PARAM_D);
+        let mat_serialized = &data[k as usize];
+        let mat: &mut __poly_q_mat_d_d = &mut (*pk).B[k as usize]; // IMPORTANT: &mut __poly_q_mat_d_d
+
         for row in 0..PARAM_D {
-            let poly_row = &mat.rows[row];
-            mat_serialized.push(serialize_vec_d(poly_row));
+            let row_serialized = &mat_serialized[row as usize];
+
+            // rows[row] is [__poly_q_vec_d;1], so take [0]
+            let poly_row: &mut __poly_q_vec_d = &mut mat.rows[row as usize][0];
+
+            for i in 0..PARAM_D {
+                let coeffs = &row_serialized[i as usize];
+                let poly: &mut nmod_poly_struct = &mut poly_row.entries[i as usize];
+                deserialize_poly_q(poly as *mut _, coeffs);
+            }
         }
-        b_serialized.push(mat_serialized);
     }
 
-    let seed = std::slice::from_raw_parts((*pk).seed.as_ptr(), SEED_BYTES as usize).to_vec();
-    (b_serialized, seed)
+    // Copy the seed
+    (*pk).seed.copy_from_slice(seed);
 }
  */
+
 fn main() -> std::io::Result<()> {
     unsafe {
         arith_setup();
         random_init();
-
-        let mut stream = TcpStream::connect("127.0.0.1:4000")?;
-        println!("Client: connected to server");
-
+        println!("Client: arithmetic and random initialized");
         // Initialize keys (same seed as server)
         let mut pk = MaybeUninit::<pk_t>::uninit();
         let mut sk = MaybeUninit::<sk_t>::uninit();
         keys_init(pk.as_mut_ptr(), sk.as_mut_ptr());
+        let client = reqwest::blocking::Client::new();
 
-        // Use fixed seed for deterministic key generation (placeholder)
-        //let fixed_seed = [42u8; SEED_BYTES as usize];
-        // Derive seed from a string (if SEED_BYTES is 32)
+        let pk_response: PublicKeyResponse = client
+            .get("http://127.0.0.1:8080/pk")
+            .send()
+            .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?
+            .json()
+            .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?; //
 
-        let seed_string = b"my_fixed_seed_for_testing";
-        let mut fixed_seed = [0u8; SEED_BYTES as usize];
-
-        let len = seed_string.len().min(SEED_BYTES as usize);
-        fixed_seed[..len].copy_from_slice(&seed_string[..len]);
-
+        println!(
+            "Client: received public key ({} bytes): {:?}}\n seed: {:?}",
+            &pk_response.b.len(),
+            &pk_response.b[..pk_response.b.len().min(6)],
+            &pk_response.seed
+        );
+        /* let blind_sign_response: BlindSignResponse = response_pk
+                   .json::<BlindSignResponse>()
+                   .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?; // Now call json() on Response
+        */
         // After keygen() call
-        keygen(pk.as_mut_ptr(), sk.as_mut_ptr());
-        println!("Client: keys generated (using fixed seed)"); // or "Server: ..."
+        /*       assert_eq!(pk_response.pk_bytes.len(), std::mem::size_of::<pk_t>());
+               ptr::copy_nonoverlapping(
+                   pk_response.pk_bytes.as_ptr(),
+                   pk.as_mut_ptr() as *mut u8,
+                   pk_response.pk_bytes.len(),
+               );
+        */
+        //        let pk = load_pk_from_serialized(&pk_data.b, &pk_data.seed);
+        let pk = unsafe {
+            load_pk_from_serialized(&pk_response.b, &pk_response.seed.try_into().unwrap())
+        };
+        println!("Client: public key reconstructed");
+        //keygen(pk.as_mut_ptr(), sk.as_mut_ptr());
 
         // Print seed
         let pk_seed = &(*pk.as_ptr()).seed;
@@ -157,15 +246,22 @@ fn main() -> std::io::Result<()> {
         // Generate commitment
         let mut rand = MaybeUninit::<rand_t>::uninit();
         rand_init(rand.as_mut_ptr());
+        println!("Client: random generated");
 
         let mut cmt = MaybeUninit::<poly_q_vec_d>::uninit();
         let mut tag = MaybeUninit::<poly_q>::uninit();
         let mut state = [0u8; STATE_BYTES as usize];
+        poly_q_vec_d_init(cmt.as_mut_ptr() as *mut __poly_q_vec_d);
+        poly_q_init(tag.as_mut_ptr() as *mut nmod_poly_struct);
+        randombytes(state.as_mut_ptr(), STATE_BYTES as usize);
 
+        println!("Client: init generated");
         tag_gen(
             tag.as_mut_ptr() as *mut nmod_poly_struct,
             state.as_mut_ptr(),
         );
+        println!("Client: tag generated");
+
         commit(
             rand.as_mut_ptr(),
             cmt.as_mut_ptr() as *mut __poly_q_vec_d,
@@ -177,11 +273,10 @@ fn main() -> std::io::Result<()> {
 
         // Send commitment and tag
         let cmt_coeffs = serialize_poly_q_vec_d(cmt.as_mut_ptr() as *mut __poly_q_vec_d);
-        send_coeffs(&mut stream, &cmt_coeffs)?;
+        //send_coeffs(&mut stream, &cmt_coeffs)?;
 
         let tag_coeffs = serialize_poly_q(tag.as_mut_ptr() as *mut nmod_poly_struct);
-        send_coeffs(&mut stream, &tag_coeffs)?;
-        stream.flush()?;
+
         println!(
             "Client: sent commitment {} and tag {} coefficients: {:?}",
             cmt_coeffs.len(),
@@ -189,8 +284,30 @@ fn main() -> std::io::Result<()> {
             &cmt_coeffs[..cmt_coeffs.len().min(6)]
         );
 
+        let request_data = BlindSignRequest {
+            cmt_coeffs: cmt_coeffs,
+            tag_coeffs: tag_coeffs,
+        };
+        // In your client code, replace the TCP stream parts with:
+
+        let response = client
+            .post("http://127.0.0.1:8080/blind_sign")
+            .json(&request_data)
+            .send()
+            .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
+
+        let blind_sign_response: BlindSignResponse = response
+            .json::<BlindSignResponse>()
+            .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?; // Now call json() on Response
+                                                                              //            .json::<BlindSignResponse>();
+
+        let pre_sig_coeffs = blind_sign_response.pre_sig_coeffs;
+        println!(
+            "Client: received pre-signature ({} coefficients)",
+            pre_sig_coeffs.len()
+        );
+
         // Receive and reconstruct pre-signature
-        let pre_sig_coeffs = recv_coeffs(&mut stream)?;
         let mut pre_sig = MaybeUninit::<pre_sig_t>::uninit();
         pre_sig_init(pre_sig.as_mut_ptr());
         deserialize_pre_sig(pre_sig.as_mut_ptr(), &pre_sig_coeffs);
@@ -267,7 +384,7 @@ fn main() -> std::io::Result<()> {
         poly_q_vec_d_clear(cmt.as_mut_ptr() as *mut __poly_q_vec_d);
         poly_q_clear(tag.as_mut_ptr() as *mut nmod_poly_struct);
         pre_sig_clear(pre_sig.as_mut_ptr());
-        keys_clear(pk.as_mut_ptr(), sk.as_mut_ptr());
+        keys_clear(pk.as_mut_ptr(), std::ptr::null_mut());
         rand_clear(rand.as_mut_ptr());
         arith_teardown();
     }
