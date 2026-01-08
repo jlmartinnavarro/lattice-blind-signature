@@ -32,15 +32,15 @@ unsafe fn serialize_poly_q_vec_d(vec_ptr: *mut __poly_q_vec_d) -> Vec<i64> {
     coeffs
 }
 
-/*unsafe fn serialize_poly_q(poly_ptr: *mut nmod_poly_struct) -> Vec<i64> {
+unsafe fn serialize_poly_q(poly_ptr: *mut nmod_poly_struct) -> Vec<i64> {
     (0..PARAM_N)
         .map(|i| poly_q_get_coeff(poly_ptr, i as usize))
         .collect()
 }
- */
-use flint_sys::nmod_poly::*;
 
-unsafe fn serialize_poly_q(poly: *const nmod_poly_struct) -> Vec<i64> {
+//use flint_sys::nmod_poly::*;
+
+/* unsafe fn serialize_poly_q(poly: *const nmod_poly_struct) -> Vec<i64> {
     let len = nmod_poly_length(poly);
     let mut coeffs = Vec::with_capacity(len as usize);
 
@@ -51,7 +51,7 @@ unsafe fn serialize_poly_q(poly: *const nmod_poly_struct) -> Vec<i64> {
 
     coeffs
 }
-
+ */
 unsafe fn deserialize_pre_sig(pre_sig_ptr: *mut pre_sig_t, coeffs: &[i64]) {
     let mut idx = 0;
 
@@ -88,7 +88,7 @@ unsafe fn deserialize_pre_sig(pre_sig_ptr: *mut pre_sig_t, coeffs: &[i64]) {
     }
 }
 
-unsafe fn load_pk_from_serialized(
+/* unsafe fn load_pk_from_serialized(
     serialized_b: &Vec<Vec<Vec<Vec<i64>>>>, // [K][D][D][coeffs]
     seed: &[u8; SEED_BYTES as usize],
 ) -> pk_t {
@@ -122,7 +122,7 @@ unsafe fn load_pk_from_serialized(
     pk.seed.copy_from_slice(seed);
 
     *pk
-}
+} */
 /* fn send_coeffs<W: Write>(stream: &mut W, coeffs: &[i64]) -> std::io::Result<()> {
     let bytes: &[u8] = unsafe {
         std::slice::from_raw_parts(
@@ -194,7 +194,7 @@ fn main() -> std::io::Result<()> {
         keys_init(pk.as_mut_ptr(), sk.as_mut_ptr());
         let client = reqwest::blocking::Client::new();
 
-        let pk_response: PublicKeyResponse = client
+        /* let pk_response: PublicKeyResponse = client
             .get("http://127.0.0.1:8080/pk")
             .send()
             .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?
@@ -206,7 +206,7 @@ fn main() -> std::io::Result<()> {
             &pk_response.b.len(),
             &pk_response.b[..pk_response.b.len().min(6)],
             &pk_response.seed
-        );
+        ); */
         /* let blind_sign_response: BlindSignResponse = response_pk
                    .json::<BlindSignResponse>()
                    .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?; // Now call json() on Response
@@ -220,11 +220,12 @@ fn main() -> std::io::Result<()> {
                );
         */
         //        let pk = load_pk_from_serialized(&pk_data.b, &pk_data.seed);
-        let pk = unsafe {
+        /* let pk = unsafe {
             load_pk_from_serialized(&pk_response.b, &pk_response.seed.try_into().unwrap())
         };
+        */
         println!("Client: public key reconstructed");
-        //keygen(pk.as_mut_ptr(), sk.as_mut_ptr());
+        keygen(pk.as_mut_ptr(), sk.as_mut_ptr());
 
         // Print seed
         let pk_seed = &(*pk.as_ptr()).seed;
@@ -384,7 +385,7 @@ fn main() -> std::io::Result<()> {
         poly_q_vec_d_clear(cmt.as_mut_ptr() as *mut __poly_q_vec_d);
         poly_q_clear(tag.as_mut_ptr() as *mut nmod_poly_struct);
         pre_sig_clear(pre_sig.as_mut_ptr());
-        keys_clear(pk.as_mut_ptr(), std::ptr::null_mut());
+        keys_clear(pk.as_mut_ptr(), sk.as_mut_ptr());
         rand_clear(rand.as_mut_ptr());
         arith_teardown();
     }
